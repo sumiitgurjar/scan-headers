@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""
-SecureHeadersScan - Enterprise-Grade HTTP Security Header Scanner
------------------------------------------------------------------
-Complete implementation with all edge cases handled
-"""
+# ============================================================================
+#  Security Headers Scanner (SHS-Scan)
+#  Professional HTTP security header analysis tool
+#  Version: 2.0.1
+# ============================================================================
 
 import sys
 import os
@@ -12,19 +12,195 @@ import signal
 import socket
 import json
 import csv
-import concurrent.futures
 import random
 import ssl
 import threading
+import subprocess
+import logging
 from typing import Dict, List, Optional, Tuple, Any, Set
 from dataclasses import dataclass, asdict
 from enum import Enum
 from pathlib import Path
 from urllib.parse import urlparse, urlunparse
-from datetime import datetime
-import logging
+from datetime import datetime, timezone
+import concurrent.futures
+
+# ============================================================================
+# Dependency Management
+# ============================================================================
+
+class DependencyManager:
+    """Professional dependency management for SHS-Scan"""
+    
+    REQUIRED_PACKAGES = {
+        'requests': 'requests>=2.31.0',
+        'urllib3': 'urllib3>=2.0.0',
+        'rich': 'rich>=13.0.0',
+        'tenacity': 'tenacity>=8.0.0'
+    }
+    
+    @staticmethod
+    def check_package(module_name: str) -> bool:
+        """Check if a package is installed"""
+        try:
+            __import__(module_name)
+            return True
+        except ImportError:
+            return False
+    
+    @staticmethod
+    def install_package(package_spec: str, quiet: bool = True) -> bool:
+        """Install a package using pip"""
+        try:
+            cmd = [sys.executable, "-m", "pip", "install"]
+            if quiet:
+                cmd.append("-q")
+            cmd.append(package_spec)
+            
+            subprocess.check_call(
+                cmd,
+                stdout=subprocess.DEVNULL if quiet else None,
+                stderr=subprocess.DEVNULL if quiet else None
+            )
+            return True
+        except subprocess.CalledProcessError:
+            return False
+    
+    @staticmethod
+    def update_package(package_name: str, quiet: bool = True) -> bool:
+        """Update a package to latest version"""
+        try:
+            cmd = [sys.executable, "-m", "pip", "install", "--upgrade"]
+            if quiet:
+                cmd.append("-q")
+            cmd.append(package_name)
+            
+            subprocess.check_call(
+                cmd,
+                stdout=subprocess.DEVNULL if quiet else None,
+                stderr=subprocess.DEVNULL if quiet else None
+            )
+            return True
+        except subprocess.CalledProcessError:
+            return False
+    
+    @classmethod
+    def check_dependencies(cls, auto_install: bool = True, show_progress: bool = False) -> bool:
+        """
+        Check and optionally install missing dependencies
+        Returns True if all dependencies are satisfied
+        """
+        missing = []
+        
+        # Check which packages are missing
+        for module_name in cls.REQUIRED_PACKAGES.keys():
+            if not cls.check_package(module_name):
+                missing.append(module_name)
+        
+        if not missing:
+            return True
+        
+        if not auto_install:
+            print(f"[!] Missing dependencies: {', '.join(missing)}")
+            print(f"[!] Install with: pip install {' '.join(cls.REQUIRED_PACKAGES.values())}")
+            return False
+        
+        # Install missing packages
+        if show_progress:
+            print(f"[*] Installing {len(missing)} missing dependencies...")
+        
+        for module_name in missing:
+            package_spec = cls.REQUIRED_PACKAGES[module_name]
+            
+            if show_progress:
+                print(f"[*] Installing {package_spec}...", end=" ", flush=True)
+            
+            if cls.install_package(package_spec, quiet=not show_progress):
+                if show_progress:
+                    print("✓")
+            else:
+                if show_progress:
+                    print("✗")
+                print(f"[!] Failed to install {package_spec}")
+                return False
+        
+        return True
+    
+    @classmethod
+    def update_dependencies(cls, quiet: bool = True) -> Dict[str, bool]:
+        """
+        Update all dependencies to latest versions
+        Returns dict of package_name: success_status
+        """
+        results = {}
+        
+        if not quiet:
+            print("[*] Updating dependencies...")
+        
+        for module_name, package_spec in cls.REQUIRED_PACKAGES.items():
+            package_name = package_spec.split('>=')[0]
+            
+            if not quiet:
+                print(f"[*] Updating {package_name}...", end=" ", flush=True)
+            
+            success = cls.update_package(package_name, quiet=quiet)
+            results[package_name] = success
+            
+            if not quiet:
+                print("✓" if success else "✗")
+        
+        return results
+
+
+# ============================================================================
+# Bootstrap Process
+# ============================================================================
+
+def bootstrap():
+    """Bootstrap the application with dependency checks"""
+    
+    # Print banner first
+    banner = r"""
+     (\_/)
+     ( •_•)
+    / >🍪   Security Headers Scan v2.0
+    """
+    print(banner)
+    print("SHS-Scan: Security Headers Scanner")
+    #print("=" * 60)
+    
+    # Check for --update-deps flag
+    update_deps = any(arg in ("--update-deps", "-U") for arg in sys.argv)
+    
+    # Check and install dependencies
+    if not DependencyManager.check_dependencies(auto_install=True, show_progress=True):
+        print("[!] Failed to satisfy dependencies")
+        sys.exit(1)
+    
+    # Update dependencies if requested
+    if update_deps:
+        print("\n[*] Updating dependencies to latest versions...")
+        results = DependencyManager.update_dependencies(quiet=False)
+        
+        failed = [pkg for pkg, status in results.items() if not status]
+        if failed:
+            print(f"[!] Failed to update: {', '.join(failed)}")
+        else:
+            print("[✓] All dependencies updated successfully")
+    
+    print("=" * 60)
+    print()
+
+
+# Run bootstrap
+bootstrap()
+
+# ============================================================================
+# Import Third-Party Dependencies
+# ============================================================================
 
 import requests
+import urllib3
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from rich.console import Console
@@ -45,13 +221,18 @@ from tenacity import (
     retry,
     stop_after_attempt,
     wait_exponential,
-    wait_random,
     retry_if_exception_type,
-    before_sleep_log,
 )
 
-# Install rich traceback
+# ============================================================================
+# Configuration
+# ============================================================================
+
+# Install rich traceback handler
 install_rich_traceback()
+
+# Suppress SSL warnings globally
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Configure logging
 logging.basicConfig(
@@ -60,14 +241,21 @@ logging.basicConfig(
     handlers=[RichHandler(rich_tracebacks=True, markup=True)]
 )
 logger = logging.getLogger(__name__)
-# Reduce urllib3 logging
-logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.ERROR)
 logging.getLogger("requests").setLevel(logging.WARNING)
 
 console = Console()
 
-# Global shutdown flag
+# Global state
 SHUTDOWN_REQUESTED = False
+FOLLOW_REDIRECTS = True
+DNS_CACHE = {}
+CONNECT_TIMEOUT = 5
+READ_TIMEOUT = 30
+
+# ============================================================================
+# Data Structures
+# ============================================================================
 
 class OutputFormat(Enum):
     CONSOLE = "console"
@@ -75,6 +263,7 @@ class OutputFormat(Enum):
     CSV = "csv"
     HTML = "html"
     MARKDOWN = "markdown"
+
 
 @dataclass
 class SecurityHeader:
@@ -86,7 +275,29 @@ class SecurityHeader:
     reference: str
     category: str  # xss, clickjacking, transport, etc.
 
-# Comprehensive security headers database
+
+@dataclass
+class ScanResult:
+    """Data class for scan results"""
+    url: str
+    status_code: int
+    headers: Dict[str, str]
+    missing_headers: List[str]
+    present_headers: List[str]
+    scan_time: float
+    error: Optional[str] = None
+    redirect_chain: List[str] = None
+    final_url: Optional[str] = None
+    ip_address: Optional[str] = None
+    server: Optional[str] = None
+    timestamp: str = None
+    retries_used: int = 0
+
+
+# ============================================================================
+# Security Headers Database
+# ============================================================================
+
 SECURITY_HEADERS: Dict[str, SecurityHeader] = {
     "Content-Security-Policy": SecurityHeader(
         name="Content-Security-Policy",
@@ -186,89 +397,78 @@ SECURITY_HEADERS: Dict[str, SecurityHeader] = {
     ),
 }
 
-@dataclass
-class ScanResult:
-    """Data class for scan results"""
-    url: str
-    status_code: int
-    headers: Dict[str, str]
-    missing_headers: List[str]
-    present_headers: List[str]
-    scan_time: float
-    error: Optional[str] = None
-    redirect_chain: List[str] = None
-    final_url: Optional[str] = None
-    ip_address: Optional[str] = None
-    server: Optional[str] = None
-    timestamp: str = None
-    retries_used: int = 0
-    
-    def __post_init__(self):
-        if self.timestamp is None:
-            self.timestamp = datetime.utcnow().isoformat()
-        if self.redirect_chain is None:
-            self.redirect_chain = []
+DEPRECATED_HEADERS = {
+    "X-Frame-Options": "Deprecated: Use Content-Security-Policy frame-ancestors instead.",
+    "X-XSS-Protection": "Deprecated: Use Content-Security-Policy instead.",
+    "Public-Key-Pins": "Deprecated: Use Certificate Transparency instead.",
+    "Expect-CT": "Deprecated: No longer recommended by MDN.",
+}
 
-# Signal handler for graceful shutdown
-def signal_handler(signum, frame):
-    """Handle interrupt signals gracefully"""
-    global SHUTDOWN_REQUESTED
-    SHUTDOWN_REQUESTED = True
-    console.print("\n[yellow]⚠️  Shutdown requested. Finishing current operation...[/yellow]")
-    raise KeyboardInterrupt("Shutdown requested by user")
+BEST_PRACTICE_CHECKS = [
+    {
+        "name": "Strict-Transport-Security",
+        "required": True,
+        "check": lambda v: v and "max-age=" in v and "includeSubDomains" in v and "preload" in v,
+        "recommendation": "Set Strict-Transport-Security: max-age=63072000; includeSubDomains; preload"
+    },
+    {
+        "name": "Content-Security-Policy",
+        "required": True,
+        "check": lambda v: v and "default-src" in v and "'self'" in v,
+        "recommendation": "Set Content-Security-Policy: default-src 'self'"
+    },
+    {
+        "name": "X-Content-Type-Options",
+        "required": True,
+        "check": lambda v: v and v.strip().lower() == "nosniff",
+        "recommendation": "Set X-Content-Type-Options: nosniff"
+    },
+    {
+        "name": "Referrer-Policy",
+        "required": False,
+        "check": lambda v: v and v.strip().lower() in ["origin-when-cross-origin", "strict-origin-when-cross-origin", "no-referrer", "same-origin"],
+        "recommendation": "Set Referrer-Policy: origin-when-cross-origin or stricter"
+    },
+    {
+        "name": "Cache-Control",
+        "required": False,
+        "check": lambda v: v and "no-store" in v,
+        "recommendation": "Set Cache-Control: no-store for sensitive endpoints"
+    },
+    {
+        "name": "Permissions-Policy",
+        "required": False,
+        "check": lambda v: v and ("microphone=()" in v or "camera=()" in v or "geolocation=()" in v),
+        "recommendation": "Set Permissions-Policy: microphone=(), camera=(), geolocation=()"
+    },
+    {
+        "name": "Access-Control-Allow-Origin",
+        "required": False,
+        "check": lambda v: v and v.strip() != "*",
+        "recommendation": "Avoid Access-Control-Allow-Origin: * (use specific origins)"
+    },
+    {
+        "name": "Clear-Site-Data",
+        "required": False,
+        "check": lambda v: v and "*" in v,
+        "recommendation": "Set Clear-Site-Data: * for logout endpoints"
+    },
+]
 
-# Register signal handlers
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
+SECURITY_HEADER_NAMES: List[str] = list(SECURITY_HEADERS.keys())
+SECURITY_HEADER_LOWER_SET: Set[str] = {h.lower() for h in SECURITY_HEADER_NAMES}
 
-def build_robust_session() -> requests.Session:
-    """
-    Build a robust HTTP session with intelligent retry and connection handling
-    """
-    session = requests.Session()
-    
-    # Intelligent retry strategy
-    retry_strategy = Retry(
-        total=2,
-        backoff_factor=1.0,
-        status_forcelist=[408, 429, 500, 502, 503, 504],
-        allowed_methods=["HEAD", "GET", "OPTIONS"],
-        respect_retry_after_header=True,
-    )
-    
-    # Custom adapter with connection pooling
-    adapter = HTTPAdapter(
-        max_retries=retry_strategy,
-        pool_connections=20,
-        pool_maxsize=20,
-        pool_block=False,
-    )
-    
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    
-    # Set headers
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-    })
-    
-    return session
+# ============================================================================
+# Core Functions
+# ============================================================================
 
 def validate_and_normalize_url(url: str) -> Optional[str]:
-    """
-    Validate and normalize URL
-    """
+    """Validate and normalize URL"""
     if not url or not isinstance(url, str):
         return None
     
     url = url.strip()
     
-    # Add scheme if missing
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     
@@ -278,7 +478,6 @@ def validate_and_normalize_url(url: str) -> Optional[str]:
         if not parsed.netloc:
             return None
         
-        # Normalize URL
         normalized = urlunparse((
             parsed.scheme,
             parsed.netloc.lower(),
@@ -292,6 +491,36 @@ def validate_and_normalize_url(url: str) -> Optional[str]:
     except Exception:
         return None
 
+
+def build_robust_session() -> requests.Session:
+    """Build a robust HTTP session with intelligent retry and connection handling"""
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=0,
+        backoff_factor=1.0,
+        status_forcelist=[408, 429, 500, 502, 503, 504],
+        allowed_methods=["HEAD", "GET", "OPTIONS"],
+        respect_retry_after_header=True,
+    )
+    adapter = HTTPAdapter(
+        max_retries=retry_strategy,
+        pool_connections=20,
+        pool_maxsize=20,
+        pool_block=False,
+    )
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    })
+    return session
+
+
 @retry(
     retry=retry_if_exception_type((
         requests.exceptions.ConnectionError,
@@ -301,15 +530,10 @@ def validate_and_normalize_url(url: str) -> Optional[str]:
     )),
     stop=stop_after_attempt(2),
     wait=wait_exponential(multiplier=1, min=2, max=10),
-    before_sleep=lambda retry_state: logger.warning(
-        f"Retry {retry_state.attempt_number} for {retry_state.args[0]}"
-    ),
 )
 def scan_single_url(url: str) -> ScanResult:
-    """
-    Scan a single URL for security headers
-    """
-    global SHUTDOWN_REQUESTED
+    """Scan a single URL for security headers"""
+    global SHUTDOWN_REQUESTED, FOLLOW_REDIRECTS, DNS_CACHE
     
     if SHUTDOWN_REQUESTED:
         raise KeyboardInterrupt("Shutdown requested")
@@ -318,76 +542,59 @@ def scan_single_url(url: str) -> ScanResult:
     retries_used = 0
     
     try:
-        # Create session
         session = build_robust_session()
         
-        # Add small random delay
         time.sleep(random.uniform(0.1, 0.5))
         
-        # Try HEAD first
-        try:
-            response = session.head(
-                url,
-                allow_redirects=True,
-                verify=True,
-                timeout=(5, 15),
-                stream=False
-            )
-            
-            if response.status_code >= 400:
-                raise requests.RequestException(f"HEAD returned {response.status_code}")
-                
-        except (requests.RequestException, requests.Timeout):
-            # Fall back to GET
-            response = session.get(
-                url,
-                allow_redirects=True,
-                verify=True,
-                timeout=(10, 30),
-                stream=False
-            )
+        response = session.get(
+            url,
+            allow_redirects=FOLLOW_REDIRECTS,
+            verify=False,
+            timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+            stream=False
+        )
         
-        # Process response
-        headers_lower = {k.lower(): v for k, v in response.headers.items()}
+        all_responses = []
+        if hasattr(response, 'history'):
+            all_responses.extend(response.history)
+        all_responses.append(response)
         
-        # Analyze security headers
-        missing_headers = []
-        present_headers = []
+        final_response = response
         
-        for header_name in SECURITY_HEADERS.keys():
-            header_lower = header_name.lower()
-            if header_lower in headers_lower:
-                present_headers.append(header_name)
-            else:
-                missing_headers.append(header_name)
+        headers_lower = {k.lower(): v for k, v in final_response.headers.items()}
         
-        # Get server information
-        server_info = response.headers.get('Server', '')
+        present_headers = [h for h in SECURITY_HEADER_NAMES if h.lower() in headers_lower]
+        missing_headers = [h for h in SECURITY_HEADER_NAMES if h not in present_headers]
         
-        # Get IP address
+        server_info = final_response.headers.get('Server', '')
+        
         ip_address = None
         try:
-            domain = urlparse(url).netloc
-            ip_address = socket.gethostbyname(domain)
-        except (socket.gaierror, socket.error):
-            pass
+            domain = urlparse(final_response.url).netloc
+            if domain in DNS_CACHE:
+                ip_address = DNS_CACHE[domain]
+            else:
+                try:
+                    ip_address = socket.gethostbyname(domain)
+                    DNS_CACHE[domain] = ip_address
+                except (socket.gaierror, socket.error):
+                    ip_address = None
+        except Exception:
+            ip_address = None
         
-        # Build redirect chain
-        redirect_chain = []
-        if hasattr(response, 'history') and response.history:
-            redirect_chain = [resp.url for resp in response.history]
+        redirect_chain = [resp.url for resp in all_responses]
         
         scan_time = time.perf_counter() - start_time
         
         return ScanResult(
             url=url,
-            status_code=response.status_code,
-            headers=dict(response.headers),
+            status_code=final_response.status_code,
+            headers=dict(final_response.headers),
             missing_headers=missing_headers,
             present_headers=present_headers,
             scan_time=scan_time,
             redirect_chain=redirect_chain,
-            final_url=response.url,
+            final_url=final_response.url,
             ip_address=ip_address,
             server=server_info,
             retries_used=retries_used
@@ -462,10 +669,9 @@ def scan_single_url(url: str) -> ScanResult:
             retries_used=retries_used
         )
 
+
 def scan_multiple_urls(urls: List[str], max_workers: int = 5) -> List[ScanResult]:
-    """
-    Scan multiple URLs concurrently
-    """
+    """Scan multiple URLs concurrently"""
     global SHUTDOWN_REQUESTED
     
     results = []
@@ -485,12 +691,10 @@ def scan_multiple_urls(urls: List[str], max_workers: int = 5) -> List[ScanResult
             total=len(urls)
         )
         
-        # Use ThreadPoolExecutor
         with concurrent.futures.ThreadPoolExecutor(
             max_workers=min(max_workers, len(urls)),
-            thread_name_prefix="scanner"
+            thread_name_prefix="shs-scanner"
         ) as executor:
-            # Submit all tasks
             future_to_url = {}
             for url in urls:
                 if SHUTDOWN_REQUESTED:
@@ -499,7 +703,6 @@ def scan_multiple_urls(urls: List[str], max_workers: int = 5) -> List[ScanResult
                 future = executor.submit(scan_single_url, url)
                 future_to_url[future] = url
             
-            # Process results as they complete
             for future in concurrent.futures.as_completed(future_to_url):
                 if SHUTDOWN_REQUESTED:
                     for f in future_to_url:
@@ -538,103 +741,120 @@ def scan_multiple_urls(urls: List[str], max_workers: int = 5) -> List[ScanResult
     
     return results
 
-def display_result(result: ScanResult, show_all: bool = False):
-    """
-    Display scan result in console
-    """
+
+def display_result(result: ScanResult, show_all: bool = False, remove_headers: Set[str] = None):
+    """Display scan result in console"""
+    if remove_headers is None:
+        remove_headers = set()
+    
     if result.error:
         console.print(Panel.fit(
-            f"[bold red]Error Scanning:[/bold red] {result.url}\n"
-            f"[yellow]Error:[/yellow] {result.error}",
+            f"Error Scanning: {result.url}\n"
+            f"Error: {result.error}",
             title="Scan Failed",
             border_style="red",
         ))
         return
-    
-    # Summary panel
+
     summary_panel = Panel.fit(
-        f"[bold]Target:[/bold] {result.url}\n"
-        f"[bold]Final URL:[/bold] {result.final_url or result.url}\n"
-        f"[bold]Status Code:[/bold] {result.status_code}\n"
-        f"[bold]Server:[/bold] {result.server or 'Not disclosed'}\n"
-        f"[bold]IP Address:[/bold] {result.ip_address or 'Unknown'}\n"
-        f"[bold red]Missing Headers:[/bold red] {len(result.missing_headers)}/{len(SECURITY_HEADERS)}\n"
-        f"[bold green]Scan Time:[/bold green] {result.scan_time:.3f}s\n"
-        f"[bold]Retries Used:[/bold] {result.retries_used}",
+        f"Target: {result.url}\n"
+        f"Final URL: {result.final_url or result.url}\n"
+        f"Status Code: {result.status_code}\n"
+        f"Server: {result.server or 'Not disclosed'}\n"
+        f"IP Address: {result.ip_address or 'Unknown'}\n"
+        f"Scan Time: {result.scan_time:.3f}s\n"
+        f"Retries Used: {result.retries_used}",
         title="Scan Summary",
-        border_style="blue",
+        border_style="cyan",
     )
-    
     console.print(summary_panel)
-    
-    # Security headers table
+    console.print(f"[red]Missing Headers: {len(result.missing_headers)}/{len(SECURITY_HEADERS)}[/red]")
+
     table = Table(
         title="HTTP Security Headers Analysis",
         show_lines=True,
-        header_style="bold magenta",
+        header_style="bold cyan",
         expand=True,
     )
     table.add_column("Header", style="cyan", no_wrap=True, ratio=1)
     table.add_column("Status", justify="center", ratio=1)
-    table.add_column("Severity", justify="center", ratio=1)
-    table.add_column("Value", style="yellow", no_wrap=False, ratio=2)
-    table.add_column("Description", style="white", no_wrap=False, ratio=3)
-    
-    # Sort headers by severity
+    table.add_column("Description", no_wrap=False, ratio=2)
+    table.add_column("Recommendation", no_wrap=False, ratio=2)
+
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     sorted_headers = sorted(
         SECURITY_HEADERS.items(),
         key=lambda x: severity_order.get(x[1].severity, 4)
     )
-    
+
     for header_name, header_info in sorted_headers:
-        if header_name in result.present_headers:
-            status = "[green]✓ PRESENT[/green]"
-            value = result.headers.get(header_name, "")
-            if len(value) > 100:
-                value = value[:97] + "..."
+        if header_name.lower() in remove_headers:
+            continue
+        
+        is_present = header_name in result.present_headers
+        recommendation_text = ""
+        
+        if header_name in DEPRECATED_HEADERS:
+            if header_name == "X-Frame-Options":
+                recommendation_text = "[yellow]DEPRECATED[/yellow]: Use Content-Security-Policy frame-ancestors directive instead. Set: Content-Security-Policy: frame-ancestors 'self'"
+            elif header_name == "X-XSS-Protection":
+                recommendation_text = "[yellow]DEPRECATED[/yellow]: Use Content-Security-Policy instead. Set: Content-Security-Policy: default-src 'self'; script-src 'self'"
+            elif header_name == "Public-Key-Pins":
+                recommendation_text = "[yellow]DEPRECATED[/yellow]: Use Certificate Transparency logs instead"
+            elif header_name == "Expect-CT":
+                recommendation_text = "[yellow]DEPRECATED[/yellow]: Remove this header. Use certificate transparency instead"
+            else:
+                recommendation_text = f"[yellow]DEPRECATED[/yellow]: {DEPRECATED_HEADERS[header_name]}"
         else:
-            status = "[red]✗ MISSING[/red]"
-            value = f"[yellow]{header_info.recommendation}[/yellow]"
+            best_practice_check = None
+            for check in BEST_PRACTICE_CHECKS:
+                if check["name"] == header_name:
+                    best_practice_check = check
+                    break
+            
+            v = result.headers.get(header_name, None)
+            
+            if best_practice_check:
+                if not v and best_practice_check["required"]:
+                    recommendation_text = f"[red]REQUIRED[/red]: {best_practice_check['recommendation']}"
+                elif v and not best_practice_check["check"](v):
+                    recommendation_text = f"[yellow]WEAK CONFIG[/yellow]: {best_practice_check['recommendation']}"
+                elif is_present:
+                    recommendation_text = f"[green]OK[/green]: {v[:70]}..." if len(v) > 70 else f"[green]OK[/green]: {v}"
+                else:
+                    recommendation_text = f"[yellow]NOT SET[/yellow]: {best_practice_check['recommendation']}"
+            else:
+                if is_present:
+                    v_val = result.headers.get(header_name, "")
+                    recommendation_text = f"[green]OK[/green]: {v_val[:70]}..." if len(v_val) > 70 else f"[green]OK[/green]: {v_val}"
+                else:
+                    recommendation_text = f"[yellow]NOT SET[/yellow]: {header_info.recommendation}"
         
-        # Color code severity
-        severity_color = {
-            "critical": "red",
-            "high": "yellow",
-            "medium": "blue",
-            "low": "green"
-        }.get(header_info.severity, "white")
-        
-        severity = f"[{severity_color}]{header_info.severity.upper()}[/{severity_color}]"
+        status_cell = "[green]✓ PRESENT[/green]" if is_present else "[red]✗ MISSING[/red]"
         
         table.add_row(
-            header_name,
-            status,
-            severity,
-            value,
-            header_info.description
+            f"[cyan]{header_name}[/cyan]",
+            status_cell,
+            header_info.description,
+            recommendation_text
         )
     
     console.print(table)
-    
-    # Show all headers if requested
+
     if show_all and result.headers:
-        console.print("\n[bold]All HTTP Headers:[/bold]")
+        console.print("\n[bold cyan]All HTTP Headers:[/bold cyan]")
         headers_table = Table(show_header=True, header_style="bold cyan")
         headers_table.add_column("Header")
         headers_table.add_column("Value")
-        
         for header, value in sorted(result.headers.items()):
             if len(value) > 100:
                 value = value[:97] + "..."
             headers_table.add_row(header, value)
-        
         console.print(headers_table)
 
+
 def export_results(results: List[ScanResult], format: OutputFormat, filename: str):
-    """
-    Export scan results to file
-    """
+    """Export scan results to file"""
     try:
         if format == OutputFormat.JSON:
             with open(filename, 'w') as f:
@@ -666,34 +886,40 @@ def export_results(results: List[ScanResult], format: OutputFormat, filename: st
     except Exception as e:
         console.print(f"[red]Error exporting results: {e}[/red]")
 
+
 def generate_html_report(results: List[ScanResult]) -> str:
     """Generate HTML report"""
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Security Headers Scan Report</title>
+    <title>Security Headers Scan Report - SHS-Scan</title>
     <style>
-        body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }}
-        .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
-        h1 {{ color: #333; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }}
+        .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+        h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
+        h2 {{ color: #34495e; margin-top: 30px; }}
         table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-        th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }}
-        th {{ background-color: #4CAF50; color: white; }}
-        .present {{ color: green; }}
-        .missing {{ color: red; }}
-        .error {{ background-color: #ffebee; padding: 10px; border-radius: 5px; margin: 10px 0; }}
-        .footer {{ margin-top: 30px; text-align: center; color: #666; font-size: 0.9em; }}
+        th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
+        th {{ background-color: #3498db; color: white; font-weight: 600; }}
+        .present {{ color: #27ae60; font-weight: 600; }}
+        .missing {{ color: #e74c3c; font-weight: 600; }}
+        .error {{ background-color: #ffebee; padding: 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid #e74c3c; }}
+        .footer {{ margin-top: 40px; text-align: center; color: #7f8c8d; font-size: 0.9em; padding-top: 20px; border-top: 1px solid #ecf0f1; }}
+        .meta {{ background: #ecf0f1; padding: 15px; border-radius: 5px; margin: 20px 0; }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Security Headers Scan Report</h1>
-        <p><strong>Generated:</strong> {timestamp}</p>
-        <p><strong>Total URLs Scanned:</strong> {len(results)}</p>
+        <h1>🔒 Security Headers Scan Report</h1>
+        <div class="meta">
+            <p><strong>Generated:</strong> {timestamp}</p>
+            <p><strong>Total URLs Scanned:</strong> {len(results)}</p>
+            <p><strong>Tool:</strong> SHS-Scan v2.0</p>
+        </div>
 """
     
     for result in results:
@@ -706,7 +932,7 @@ def generate_html_report(results: List[ScanResult]) -> str:
 """
         else:
             html += f"""
-        <h2>{result.url}</h2>
+        <h2>📋 {result.url}</h2>
         <p><strong>Status Code:</strong> {result.status_code} | 
            <strong>Scan Time:</strong> {result.scan_time:.3f}s | 
            <strong>Missing Headers:</strong> {len(result.missing_headers)}/{len(SECURITY_HEADERS)}</p>
@@ -750,7 +976,7 @@ def generate_html_report(results: List[ScanResult]) -> str:
     
     html += f"""
         <div class="footer">
-            <p>Generated by SecureHeadersScan</p>
+            <p><strong>Generated by SHS-Scan - Security Headers Scanner</strong></p>
             <p>Report generated on {timestamp}</p>
         </div>
     </div>
@@ -760,14 +986,16 @@ def generate_html_report(results: List[ScanResult]) -> str:
     
     return html
 
+
 def generate_markdown_report(results: List[ScanResult]) -> str:
     """Generate Markdown report"""
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     
-    markdown = f"""# Security Headers Scan Report
+    markdown = f"""# 🔒 Security Headers Scan Report
 
 **Generated:** {timestamp}  
-**Total URLs Scanned:** {len(results)}
+**Total URLs Scanned:** {len(results)}  
+**Tool:** SHS-Scan v2.0
 
 ---
 """
@@ -808,15 +1036,16 @@ def generate_markdown_report(results: List[ScanResult]) -> str:
             markdown += "\n---\n"
     
     markdown += f"""
-*Report generated by SecureHeadersScan on {timestamp}*
+---
+
+*Generated by SHS-Scan - Security Headers Scanner on {timestamp}*
 """
     
     return markdown
 
+
 def parse_input_file(filename: str) -> List[str]:
-    """
-    Parse input file containing URLs
-    """
+    """Parse input file containing URLs"""
     urls = []
     
     try:
@@ -836,39 +1065,32 @@ def parse_input_file(filename: str) -> List[str]:
     
     return urls
 
+
 def main():
     """Main entry point"""
-    global SHUTDOWN_REQUESTED
+    global SHUTDOWN_REQUESTED, FOLLOW_REDIRECTS, READ_TIMEOUT, CONNECT_TIMEOUT
     
     try:
-        # Display banner
-        console.print(Panel.fit(
-            "[bold cyan]SecureHeadersScan v2.0[/bold cyan]\n"
-            "Robust HTTP Security Header Scanner\n\n"
-            "[green]✓ Graceful shutdown (Ctrl+C)[/green]\n"
-            "[green]✓ Progress tracking[/green]\n"
-            "[green]✓ Multiple export formats[/green]\n\n"
-            "[yellow]Press Ctrl+C at any time for graceful shutdown[/yellow]",
-            border_style="green",
-            padding=(1, 2),
-        ))
-        
-        # Parse command line arguments
         import argparse
-        
         parser = argparse.ArgumentParser(
-            description="Scan HTTP security headers",
+            description="SHS-Scan - Security Headers Scanner v2.0",
             formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog="""
 Examples:
   %(prog)s https://example.com
   %(prog)s -f urls.txt
   %(prog)s url1 url2 url3
-  %(prog)s -f urls.txt -o results.json --format json
+  %(prog)s -f urls.txt -o report.json --format json
+  %(prog)s --update-deps https://example.com
             """
         )
         
-        # Input options
+        parser.add_argument(
+            "--update-deps", "-U",
+            action="store_true",
+            help="Update dependencies to latest versions"
+        )
+        
         parser.add_argument(
             "urls",
             nargs="*",
@@ -879,7 +1101,6 @@ Examples:
             help="File containing list of URLs"
         )
         
-        # Performance options
         parser.add_argument(
             "-w", "--workers",
             type=int,
@@ -892,8 +1113,13 @@ Examples:
             default=30,
             help="Request timeout in seconds (default: 30)"
         )
+        parser.add_argument(
+            "--connect-timeout",
+            type=int,
+            default=5,
+            help="TCP connect timeout in seconds (default: 5)"
+        )
         
-        # Output options
         parser.add_argument(
             "-o", "--output",
             help="Output filename"
@@ -914,23 +1140,40 @@ Examples:
             action="store_true",
             help="Enable verbose logging"
         )
+        parser.add_argument(
+            "--no-follow-redirects",
+            dest="follow_redirects",
+            action="store_false",
+            help="Do not follow HTTP redirects",
+        )
+        parser.add_argument(
+            "--remove-header",
+            type=str,
+            default="",
+            help="Comma-separated list of headers to exclude from analysis"
+        )
         
         args = parser.parse_args()
         
-        # Set logging level
         if args.verbose:
             logging.getLogger().setLevel(logging.INFO)
-            console.print("[yellow]Verbose mode enabled[/yellow]\n")
+            console.print("[cyan]Verbose mode enabled[/cyan]\n")
+
+        FOLLOW_REDIRECTS = bool(getattr(args, 'follow_redirects', True))
+        if not FOLLOW_REDIRECTS:
+            console.print("[yellow]Redirect following disabled[/yellow]\n")
         
-        # Collect URLs
+        READ_TIMEOUT = int(args.timeout)
+        CONNECT_TIMEOUT = int(getattr(args, 'connect_timeout', CONNECT_TIMEOUT))
+        console.print(f"[cyan]Timeouts - Connect: {CONNECT_TIMEOUT}s, Read: {READ_TIMEOUT}s[/cyan]\n")
+        
         all_urls = []
         
         if args.file:
             file_urls = parse_input_file(args.file)
             all_urls.extend(file_urls)
-            console.print(f"[green]Loaded {len(file_urls)} URLs from file[/green]")
+            console.print(f"[cyan]Loaded {len(file_urls)} URLs from file[/cyan]")
         
-        # Add command line URLs
         for url in args.urls:
             normalized = validate_and_normalize_url(url)
             if normalized:
@@ -938,31 +1181,29 @@ Examples:
             else:
                 console.print(f"[yellow]Warning: Invalid URL skipped: {url}[/yellow]")
         
-        # If no URLs provided, ask interactively
         if not all_urls:
-            console.print("\n[bold]Interactive Mode[/bold]")
-            console.print("=" * 50)
+            console.print("\n[bold cyan]Interactive Mode[/bold cyan]")
+            #console.print("=" * 60)
             
             while True:
-                url_input = console.input("\n[yellow]Enter target URL (or 'quit' to exit): [/yellow]").strip()
+                url_input = console.input("\nEnter target URL (or 'quit' to exit): ").strip()
                 
                 if url_input.lower() in ['quit', 'exit', 'q']:
-                    console.print("[yellow]Goodbye![/yellow]")
+                    console.print("[cyan]Goodbye![/cyan]")
                     sys.exit(0)
                 
                 if not url_input:
-                    console.print("[red]Please enter a URL[/red]")
+                    console.print("[yellow]Please enter a URL[/yellow]")
                     continue
                 
                 normalized = validate_and_normalize_url(url_input)
                 if not normalized:
-                    console.print("[red]Invalid URL format. Please include http:// or https://[/red]")
+                    console.print("[yellow]Invalid URL format. Please include http:// or https://[/yellow]")
                     continue
                 
                 all_urls.append(normalized)
                 break
         
-        # Remove duplicates
         seen = set()
         unique_urls = []
         for url in all_urls:
@@ -970,32 +1211,15 @@ Examples:
                 seen.add(url)
                 unique_urls.append(url)
         
-        console.print(f"\n[green]Found {len(unique_urls)} unique URL(s) to scan[/green]")
-        
         if len(unique_urls) == 0:
             console.print("[red]No valid URLs to scan[/red]")
             sys.exit(1)
         
-        # Display configuration
-        config_panel = Panel.fit(
-            f"[bold]Scan Configuration:[/bold]\n"
-            f"• URLs: {len(unique_urls)}\n"
-            f"• Workers: {args.workers}\n"
-            f"• Timeout: {args.timeout}s\n"
-            f"• Output Format: {args.format}\n"
-            f"• Show All Headers: {args.show_all}",
-            border_style="cyan",
-            padding=(1, 2)
-        )
-        console.print(config_panel)
-        
-        # Perform scan
-        console.print("\n[yellow]Starting scan... Press Ctrl+C to stop gracefully[/yellow]\n")
+        console.print("\n[bold green]Starting Security Headers Scan[/bold green]\n")
         
         results = []
         
         if len(unique_urls) == 1:
-            # Single URL scan
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -1020,39 +1244,34 @@ Examples:
                     console.print(f"[red]Scan failed: {e}[/red]")
                     sys.exit(1)
         else:
-            # Multiple URLs scan
             results = scan_multiple_urls(unique_urls, max_workers=args.workers)
-        
-        # Display results
-        console.print(f"\n{'='*60}")
-        console.print(f"[bold green]SCAN COMPLETE - {len(results)} URL(S) ANALYZED[/bold green]")
-        console.print(f"{'='*60}\n")
         
         successful = 0
         failed = 0
         
+        remove_headers = set()
+        if args.remove_header:
+            remove_headers = {h.strip().lower() for h in args.remove_header.split(',') if h.strip()}
+        
         for i, result in enumerate(results, 1):
             if len(results) > 1:
-                console.print(f"\n[bold cyan]{'='*50}[/bold cyan]")
+                console.print(f"\n{'='*60}")
                 console.print(f"[bold cyan]RESULT {i}/{len(results)}[/bold cyan]")
-                console.print(f"[bold cyan]{'='*50}[/bold cyan]\n")
-            
-            display_result(result, args.show_all)
-            
+                console.print(f"{'='*60}\n")
+            display_result(result, args.show_all, remove_headers)
             if result.error:
                 failed += 1
             else:
                 successful += 1
         
-        # Summary
         console.print(f"\n{'='*60}")
-        console.print("[bold]Summary:[/bold]")
-        console.print(f"  [green]Successful: {successful}[/green]")
-        console.print(f"  [red]Failed: {failed}[/red]")
-        console.print(f"  [yellow]Total time: {sum(r.scan_time for r in results):.2f}s[/yellow]")
+        console.print("[bold cyan]Summary:[/bold cyan]")
+        console.print(f"    [green]✓[/green] Successful: {successful}")
+        if failed > 0:
+            console.print(f"    [red]✗[/red] Failed: {failed}")
+        console.print(f"    Total time: {sum(r.scan_time for r in results):.2f}s")
         console.print(f"{'='*60}")
         
-        # Export results if requested
         if args.output and results:
             try:
                 format_enum = OutputFormat(args.format)
@@ -1062,10 +1281,10 @@ Examples:
             except Exception as e:
                 console.print(f"[red]Error exporting results: {e}[/red]")
         
-        console.print(f"\n[green]✓ All operations completed successfully![/green]")
+        console.print(f"\n[green]✓[/green] All operations completed successfully!\n")
         
     except KeyboardInterrupt:
-        console.print("\n[yellow]Shutdown requested. Exiting gracefully...[/yellow]")
+        console.print("\n[yellow]Shutdown requested...[/yellow]")
         sys.exit(0)
     except Exception as e:
         console.print(f"\n[red]Unexpected error: {e}[/red]")
